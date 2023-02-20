@@ -74,7 +74,7 @@ class Rota:
                 self.end_time(date + timedelta(days=1)) - self.start_time(date),
                 self.end_time(date) - self.start_time(date)
             )
-        )
+        ) if date != self.last_shift else self.end_time(date) - self.start_time(date)
 
     def is_long_day(self, date):
         """
@@ -114,8 +114,18 @@ class Rota:
             • 7 days = 604800s
         """
         return UDiv(
-            z_sum([self.shift_length(self.start_date + timedelta(days=i)) for i in range(self.length - 1)]),
+            z_sum([self.shift_length(self.start_date + timedelta(days=i)) for i in range(self.length)]),
             BitVecVal((self.length * 86400) // 604800, 24)
+        )
+
+    def start_time_constraints(self, date):
+        return Or(
+            And(
+                self.start_time(date) >= BitVecVal(0, 24),
+                self.start_time(date) < BitVecVal(86400, 24),
+                self.start_time(date) % BitVecVal(1800, 24) == BitVecVal(0, 24),
+            ),
+            self.start_time(date) == BitVecVal(16777215, 24)
         )
 
     def end_time_constraints(self, date):
@@ -132,32 +142,10 @@ class Rota:
             self.end_time(date) == BitVecVal(16777215, 24)
         )
 
-    def start_time_constraints(self, date):
-        return Or(
-            And(
-                self.start_time(date) >= BitVecVal(0, 24),
-                self.start_time(date) < BitVecVal(86400, 24),
-                self.start_time(date) % BitVecVal(1800, 24) == BitVecVal(0, 24),
-            ),
-            self.start_time(date) == BitVecVal(16777215, 24)
-        )
-
     def last_shift_constraints(self):
-        return Or(
+        return Not(
             And(
-                self.start_time(self.last_shift) >= BitVecVal(0, 24),
-                self.start_time(self.last_shift) < BitVecVal(86400, 24),
-                self.start_time(self.last_shift) % BitVecVal(1800, 24) == BitVecVal(0, 24),
-                Or(
-                    self.end_time(self.last_shift) > self.start_time(self.last_shift),
-                    self.start_time(self.last_shift) == BitVecVal(16777215, 24)
-                ),
-                self.end_time(self.last_shift) >= BitVecVal(0, 24),
-                self.end_time(self.last_shift) < BitVecVal(86400, 24),
-                self.end_time(self.last_shift) % BitVecVal(1800, 24) == BitVecVal(0, 24),
-            ),
-            And(
-                self.start_time(self.last_shift) == BitVecVal(16777215, 24),
+                self.start_time(self.last_shift) != BitVecVal(16777215, 24),
                 self.end_time(self.last_shift) == BitVecVal(16777215, 24)
             )
         )
@@ -182,19 +170,21 @@ class RotaCreator:
         It also adds some additional constraints to stop the application blowing up and to behave logically:
             •
         """
+
+        # add shift time constraints
+        for i in range(self.rota.length):
+            self.o.add(self.rota.start_time_constraints(self.rota.start_date + timedelta(days=i)))
+            self.o.add(self.rota.end_time_constraints(self.rota.start_date + timedelta(days=i)))
+
+
         # the last shift constraints
         self.o.add(self.rota.last_shift_constraints())
-
-        # add general shift time constraints
-        for i in range(self.rota.length - 1):
-            self.o.add(self.rota.end_time_constraints(self.rota.start_date + timedelta(days=i)))
-            self.o.add(self.rota.start_time_constraints(self.rota.start_date + timedelta(days=i)))
 
         # max 48-hour average working week
         self.o.add(self.rota.average_working_week() <= BitVecVal(172800, 24))
 
         # max 13-hour shift length
-        for i in range(self.rota.length - 1):
+        for i in range(self.rota.length):
             self.o.add(self.rota.shift_length(self.rota.start_date + timedelta(days=i)) <= BitVecVal(46800, 24))
 
         self.o.add(self.rota.average_working_week() > BitVecVal(72000, 24))
