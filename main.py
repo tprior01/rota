@@ -3,27 +3,27 @@ import calendar
 from datetime import date, timedelta
 
 
-def Sum(array):
+def z_sum(z_list):
     """
-    :param array: a list of ArithRef objects
-    :type array: list[ArithRef]
+    :param z_list: a list of ArithRef objects
+    :type z_list: list[ArithRef]
     :return: the sum of the items in the list
     :rtype: ArithRef
     """
-    Sum = 0
-    for item in array:
-        Sum += item
-    return Sum
+    s = 0
+    for item in z_list:
+        s += item
+    return s
 
 
-def is_weekend(start_date):
+def is_weekend(date):
     """
-    :param start_date: the date to query
-    :type start_date: date
+    :param date: the date to query
+    :type date: date
     :return: true if the date is a weekend else false
     :rtype: bool
     """
-    return calendar.weekday(start_date.year, start_date.month, start_date.day) >= 5
+    return calendar.weekday(date.year, date.month, date.day) >= 5
 
 
 class Rota:
@@ -114,26 +114,9 @@ class Rota:
             • 7 days = 604800s
         """
         return UDiv(
-            Sum([self.shift_length(self.start_date + timedelta(days=i)) for i in range(self.length)]),
+            z_sum([self.shift_length(self.start_date + timedelta(days=i)) for i in range(self.length - 1)]),
             BitVecVal((self.length * 86400) // 604800, 24)
         )
-
-    # def consecutive_long_days_no_rest(self, start_date):
-    #     return And(
-    #         self.is_long_day(start_date - timedelta(days=2)),
-    #         self.is_long_day(start_date - timedelta(days=3)),
-    #         self.is_long_day(start_date - timedelta(days=4)),
-    #         self.is_long_day(start_date - timedelta(days=5))
-    #     ), Or(
-    #         self.hours_worked(start_date - timedelta(days=1)) > BitVecVal(0, 24),
-    #         self.hours_worked(start_date) > BitVecVal(0, 24)
-    #     )
-    #
-    # def rest_after_long_day(self, start_date):
-    #     return And(
-    #         self.shift_length(start_date - timedelta(days=2)) > 24,
-    #         self.shift_length(start_date)
-    #     )
 
     def end_time_constraints(self, date):
         return Or(
@@ -207,25 +190,12 @@ class RotaCreator:
             self.o.add(self.rota.end_time_constraints(self.rota.start_date + timedelta(days=i)))
             self.o.add(self.rota.start_time_constraints(self.rota.start_date + timedelta(days=i)))
 
-        # # # the minimum shift time should be 8 hours
-        # for i in range(self.rota.length - 1):
-        #     self.o.add_soft(self.rota.shift_length(self.rota.start_date + timedelta(days=i)) > BitVecVal(28800, 24))
-
         # max 48-hour average working week
         self.o.add(self.rota.average_working_week() <= BitVecVal(172800, 24))
-
-        # max 72 hours work in any consecutive period of 168 hours
-        # for i in range(self.rota.length):
-        #     If(
-        #         self.rota.end_times[self.rota.start_date + timedelta(days = i)] >
 
         # max 13-hour shift length
         for i in range(self.rota.length - 1):
             self.o.add(self.rota.shift_length(self.rota.start_date + timedelta(days=i)) <= BitVecVal(46800, 24))
-
-        # max 4 consecutive long shifts, at least 48 hours rest following the fourth shift
-        # for i in range(5, self.rota.length - 1):
-        #     self.o.add(self.rota.consecutive_long_days_no_rest(self.rota.start_date + timedelta(days=i)) == False)
 
         self.o.add(self.rota.average_working_week() > BitVecVal(72000, 24))
 
