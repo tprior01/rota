@@ -1,6 +1,7 @@
 from z3 import *
 import calendar
 from datetime import date, timedelta
+from copy import deepcopy
 
 
 def z_sum(z_list):
@@ -16,14 +17,14 @@ def z_sum(z_list):
     return s
 
 
-def is_weekend(date):
+def is_sat(date):
     """
     :param date: the date to query
     :type date: date
-    :return: true if the date is a weekend else false
+    :return: True if the date is a Saturday else False
     :rtype: bool
     """
-    return calendar.weekday(date.year, date.month, date.day) >= 5
+    return calendar.weekday(date.year, date.month, date.day) == 5
 
 
 class Rota:
@@ -83,7 +84,7 @@ class Rota:
         """
         :param date: the date of the shift
         :type date: date
-        :return: true if the shift is longer than 10 hours else false
+        :return: True if the shift is longer than 10 hours else False
         :rtype: z3.BitVecRef
 
         Notes:
@@ -95,7 +96,7 @@ class Rota:
         """
         :param date: the date of the shift
         :type date: date
-        :return: true if the shift starts before 16:00 and ends after 23:00
+        :return: True if the shift starts before 16:00 and ends after 23:00 else False
         :rtype: z3.BitVecRef
 
         Notes:
@@ -111,7 +112,7 @@ class Rota:
         """
         :param date: the date of the shift
         :type date: date
-        :return: true if the shift starts before or at 23:00 and ends the next day on or after 06:00
+        :return: True if the shift starts before or at 23:00 and ends the next day on or after 06:00 else False
         :rtype: z3.BitVecRef
 
         Notes:
@@ -238,6 +239,19 @@ class Rota:
             True
         )
 
+    def first_shift_constraints(self):
+        """
+        :return: a boolean representing the constraints for the last shift in the rota
+        :rtype: z3.BitVecRef
+
+        If first shift has an end time then it must also have a start time.
+        """
+        return If(
+            self.end_time(self.start_date) != BitVecVal(16777215, 24),
+            self.start_time(self.start_date) != BitVecVal(16777215, 24),
+            True
+        )
+
     def average_working_week(self):
         """
         :return: the average working week in seconds
@@ -360,10 +374,6 @@ class Rota:
             )
         )
 
-    def max_1_in_3_weekends(self):
-        for i in range(self.length):
-
-
     def max_night_shifts(self, date):
         """
         :param date: the date of the shift
@@ -410,6 +420,32 @@ class Rota:
             )
         )
 
+    def weekend_constraints(self):
+        weekends = []
+        weekend_constraints = []
+        for i in range(self.length):
+            date = self.start_date + timedelta(days=i)
+            if is_sat(date):
+                weekends.append(
+                    Or(
+                        self.start_time(date) != BitVecVal(16777215, 24),
+                        self.end_time(date) != BitVecVal(16777215, 24),
+                        self.start_time(date + timedelta(days=1)) != BitVecVal(16777215, 24),
+                        self.end_time(date + timedelta(days=1)) != BitVecVal(16777215, 24)
+                    )
+                )
+        for i in range(len(weekends) - 2):
+            weekend_constraints.append(
+                Not(
+                    And(
+                        weekends[i],
+                        weekends[i + 1],
+                        weekends[i + 2]
+                    )
+                )
+            )
+        return weekend_constraints
+
 
 class RotaCreator:
     def __init__(self, start_date, end_date):
@@ -455,6 +491,9 @@ class RotaCreator:
         # add last shift constraints
         self.o.add(self.rota.last_shift_constraints())
 
+        # add first shift constraints
+        self.o.add(self.rota.first_shift_constraints())
+
         # max 48-hour average working week
         self.o.add(self.rota.average_working_week() <= BitVecVal(172800, 24))
 
@@ -479,6 +518,10 @@ class RotaCreator:
 
         for i in range(7, self.rota.length):
             self.o.add(self.rota.max_shifts(self.rota.start_date + timedelta(days=i)))
+
+        # max 1 in 3 weekends worked
+        for constraint in self.rota.weekend_constraints():
+            self.o.add(constraint)
 
     def evaluate(self):
         if self.o.check() == sat:
@@ -518,12 +561,16 @@ def main():
     if m is False:
         print(m)
     else:
-        s = [convert_z3_ref(m[d]) for d in r.rota.start_times.values()]
-        e = [convert_z3_ref(m[d]) for d in r.rota.end_times.values()]
-        l = [list(a) for a in zip(s, e)]
-        ln = shift_times(l)
-        for item in zip(s, e, ln):
-            print([item[0], item[1], item[2]])
+        weekday_dict = {0: "Monday", 1: "Tuesday", 2: "Wednesday", 3: "Thursday", 4: "Friday", 5: "Saturday",
+                        6: "Sunday"}
+        weekdays = [weekday_dict[calendar.weekday(date.year, date.month, date.day)] for date in
+                    r.rota.start_times.keys()]
+        starts = [convert_z3_ref(m[d]) for d in r.rota.start_times.values()]
+        ends = [convert_z3_ref(m[d]) for d in r.rota.end_times.values()]
+        starts_and_ends = [list(a) for a in zip(starts, ends)]
+        shift_lengths = shift_times(starts_and_ends)
+        for item in zip(weekdays, starts, ends, shift_lengths):
+            print(f"{item[0]: <10} {item[1]: <10} {item[2]: <10} {item[3]: <10}")
 
 
 if __name__ == '__main__':
