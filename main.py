@@ -1,16 +1,24 @@
+import z3
 from z3 import *
 import calendar
 from datetime import date, timedelta
-from copy import deepcopy
+
+NONE = BitVecVal(16777215, 24)
+DAYS_1 = timedelta(days=1)
+DAYS_2 = timedelta(days=2)
+DAYS_3 = timedelta(days=3)
+ZERO = BitVecVal(0, 24)
+HOURS_2 = BitVecVal(7200, 24)
+HOURS_6 = BitVecVal(21600, 24)
+HOURS_10 = BitVecVal(3600, 24)
+HOURS_16 = BitVecVal(57600, 24)
+HOURS_23 = BitVecVal(82800, 24)
+HOURS_24 = z3.BitVecVal(86400, 24)
+MINUTES_30 = BitVecVal(1800, 24)
 
 
 def z_sum(z_list):
-    """
-    :param z_list: a list of z3.BitVecRef objects
-    :type z_list: list[z3.BitVecRef]
-    :return: the sum of the items in the list
-    :rtype: z3.BitVecRef
-    """
+    """Sums a list of BitVecRef types"""
     s = 0
     for item in z_list:
         s += item
@@ -18,13 +26,14 @@ def z_sum(z_list):
 
 
 def is_sat(date):
-    """
-    :param date: the date to query
-    :type date: date
-    :return: True if the date is a Saturday else False
-    :rtype: bool
-    """
+    """Returns True of the date is a Saturday else False"""
     return calendar.weekday(date.year, date.month, date.day) == 5
+
+
+def four_prev_shifts(date, shift_type_function):
+    """Returns True if the output of the provided function is True for the previous four days"""
+    c = [shift_type_function(date - timedelta(days=i)) for i in range(1, 5)]
+    return And(c[0], c[1], c[2], c[3])
 
 
 class Rota:
@@ -35,403 +44,198 @@ class Rota:
         :param end_date: the end date of the rota
         :type end_date: date
         """
-        self.start_date = start_date
-        self.end_date = end_date
+        self.first_shift = start_date
+        self.last_shift = end_date - DAYS_1
         self.length = (end_date - start_date).days
-        self.last_shift = end_date - timedelta(days=1)
         self.start_times = {start_date + timedelta(days=i): z3.BitVec(f's{i}', 24) for i in range(self.length)}
         self.end_times = {start_date + timedelta(days=i): z3.BitVec(f'e{i}', 24) for i in range(self.length)}
         for i in range(self.length, self.length + 3):
-            self.start_times[self.start_date + timedelta(days=i)] = z3.BitVec(f'_s{i}', 24)
-            self.end_times[self.start_date + timedelta(days=i)] = z3.BitVec(f'_e{i}', 24)
+            self.start_times[self.first_shift + timedelta(days=i)] = z3.BitVec(f'_s{i}', 24)
+            self.end_times[self.first_shift + timedelta(days=i)] = z3.BitVec(f'_e{i}', 24)
 
     def start_time(self, date):
-        """
-        :param date: the date of the shift
-        :type date: date
-        :return: the start time of the shift
-        :rtype: z3.BitVecRef
-        """
+        """Returns the start time of the shift"""
         return self.start_times[date]
 
     def end_time(self, date):
-        """
-        :param date: the date of the shift
-        :type date: date
-        :return: the end time of the shift
-        :rtype: z3.BitVecRef
-        """
+        """Returns the end time of the shift"""
         return self.end_times[date]
 
     def shift_length(self, date):
-        """
-        :param date: the date of the shift
-        :type date: date
-        :return: the shift length in seconds
-        :rtype: z3.BitVecRef
-        """
+        """Returns the length of the shift"""
         return If(
-            self.start_time(date) == BitVecVal(16777215, 24),
-            BitVecVal(0, 24),
+            self.start_time(date) == NONE,
+            ZERO,
             If(
-                self.end_time(date) == BitVecVal(16777215, 24),
-                self.end_time(date + timedelta(days=1)) + z3.BitVecVal(86400, 24) - self.start_time(date),
+                self.end_time(date) == NONE,
+                self.end_time(date + DAYS_1) + HOURS_24 - self.start_time(date),
                 self.end_time(date) - self.start_time(date)
             )
         )
 
     def is_long_shift(self, date):
-        """
-        :param date: the date of the shift
-        :type date: date
-        :return: True if the shift is longer than 10 hours else False
-        :rtype: z3.BitVecRef
-
-        Notes:
-            • 10hrs = 3600s
-        """
-        return self.shift_length(date) > BitVecVal(3600, 24)
+        """Returns True if the shift is a long shift else False"""
+        return self.shift_length(date) > HOURS_10
 
     def is_long_evening_shift(self, date):
-        """
-        :param date: the date of the shift
-        :type date: date
-        :return: True if the shift starts before 16:00 and ends after 23:00 else False
-        :rtype: z3.BitVecRef
-
-        Notes:
-            • 16:00 = 57600s
-            • 23:00 = 82800s
-        """
-        return And(
-            self.start_time(date) < BitVecVal(57600, 24),
-            self.end_time(date) > BitVecVal(82800, 24)
-        )
+        """Returns True if the shift is a long evening shift else False"""
+        return And(self.start_time(date) < HOURS_16, self.end_time(date) > HOURS_23)
 
     def is_night_shift(self, date):
-        """
-        :param date: the date of the shift
-        :type date: date
-        :return: True if the shift starts before or at 23:00 and ends the next day on or after 06:00 else False
-        :rtype: z3.BitVecRef
+        """Returns True if the shift is a night shift else False"""
+        return And(self.start_time(date) <= HOURS_23,
+            self.start_time(date + DAYS_1) == NONE,
+            self.end_time(date + DAYS_1) >= HOURS_6
+        )
 
-        Notes:
-            • 23:00 = 82800s
-            • 06:00 = 57600s
+    def shift_time_constraints(self, date):
+        """
+        Shift times must be:
+            • greater than or equal to 00:00
+            • less than  24:00
+            • divisible by 00:30
+        Or:
+            • Not a time (such as a day of rest or because the end of a shift is the following day)
         """
         return And(
-            self.start_time(date) <= BitVecVal(82800, 24),
-            self.start_time(date + timedelta(days=1)) == BitVecVal(16777215, 24),
-            self.end_time(date + timedelta(days=1)) >= BitVecVal(57600, 24)
-        )
-
-    def start_time_constraints(self, date):
-        """
-        :param date: the date of the shift
-        :type date: date
-        :return: a boolean representing the constraints for the start times of a shift
-        :rtype: z3.BitVecRef
-
-        Start times of a shift must be
-            • greater than or equal to 00:00
-            • less than  24:00
-            • divisible by 00:30
-            OR
-            • where a shift does not start on this day, it is represented by the largest 24 bit number (16777215)
-        """
-        return Or(
-            And(
-                self.start_time(date) >= BitVecVal(0, 24),
-                self.start_time(date) < BitVecVal(86400, 24),
-                self.start_time(date) % BitVecVal(1800, 24) == BitVecVal(0, 24),
+            Or(
+                And(
+                    self.start_time(date) >= ZERO,
+                    self.start_time(date) < HOURS_24,
+                    self.start_time(date) % MINUTES_30 == ZERO,
+                ),
+                self.start_time(date) == NONE
             ),
-            self.start_time(date) == BitVecVal(16777215, 24)
+            Or(
+                And(
+                    self.end_time(date) >= ZERO,
+                    self.end_time(date) < HOURS_24,
+                    self.end_time(date) % MINUTES_30 == ZERO,
+                ),
+                self.end_time(date) == NONE
+            )
         )
 
-    def end_time_constraints(self, date):
+    def shift_relationships_1(self, date):
         """
-        :param date: the date of the shift
-        :type date: date
-        :return: a boolean representing the constraints for the end times of a shift
-        :rtype: z3.BitVecRef
-
-        End times of a shift must be
-            • if th
-            • greater than or equal to 00:00
-            • less than  24:00
-            • divisible by 00:30
-            OR
-            • where a shift does not start on this day, it is represented by the largest 24 bit number (16777215)
-        """
-        return Or(
-            And(
-                self.end_time(date) >= BitVecVal(0, 24),
-                self.end_time(date) < BitVecVal(86400, 24),
-                self.end_time(date) % BitVecVal(1800, 24) == BitVecVal(0, 24),
-            ),
-            self.end_time(date) == BitVecVal(16777215, 24)
-        )
-
-    def shift_relationship_constraints_1(self, date):
-        """
-        :param date: the date of the shift
-        :type date: date
-        :return: a boolean representing the constraints where there are rest days
-        :rtype: z3.BitVecRef
-
-        If there is a start time for a shift then:
-            • the end time for that shift must be on the same day
-            OR
-            • the end time for that shift will be the next day
-            • and there will be no start time for the
+        Essentially, the only two conditions that follow on from if there is a start time:
+            • the shift ends on the same day at a later time
+            • the shift ends the next day
         """
         return If(
-            self.start_time(date) != BitVecVal(16777215, 24),
+            self.start_time(date) != NONE,
             Xor(
                 And(
-                    self.end_time(date) != BitVecVal(16777215, 24),
+                    self.end_time(date) != NONE,
                     self.end_time(date) > self.start_time(date)
                 ),
                 And(
-                    self.start_time(date + timedelta(days=1)) == BitVecVal(16777215, 24),
-                    self.end_time(date + timedelta(days=1)) != BitVecVal(16777215, 24)
+                    self.start_time(date + DAYS_1) == NONE,
+                    self.end_time(date + DAYS_1) != NONE
                 )
             ),
             True
         )
 
-    def shift_relationship_constraints_2(self, date):
+    def shift_relationships_2(self, date):
         """
-        :param date: the date of the shift
-        :type date: date
-        :return: a boolean representing the constraints where there are rest days
-        :rtype: z3.BitVecRef
-
-        If there is a start time for a shift then:
-            • the end time for that shift must be on the same day
-            OR
-            • the end time for that shift will be the next day
-            • and there will be no start time for the
+        Essentially, the only two conditions in which there is no start time is when:
+            • it is a rest day
+            • the previous days shift is ending on this day
         """
         return If(
-            self.start_time(date) == BitVecVal(16777215, 24),
+            self.start_time(date) == NONE,
             Xor(
-                self.end_time(date) == BitVecVal(16777215, 24),
+                self.end_time(date) == NONE,
                 And(
-                    self.start_time(date - timedelta(days=1)) != BitVecVal(16777215, 24),
-                    self.end_time(date - timedelta(days=1)) == BitVecVal(16777215, 24),
-                    self.end_time(date) != BitVecVal(16777215, 24)
+                    self.start_time(date - DAYS_1) != NONE,
+                    self.end_time(date - DAYS_1) == NONE,
+                    self.end_time(date) != NONE
                 )
             ),
             True
         )
 
     def last_shift_constraints(self):
-        """
-        :return: a boolean representing the constraints for the last shift in the rota
-        :rtype: z3.BitVecRef
-
-        If last shift has a start time then it must also have an end time.
-        """
-        return If(
-            self.start_time(self.last_shift) != BitVecVal(16777215, 24),
-            self.end_time(self.last_shift) == BitVecVal(16777215, 24),
-            True
-        )
+        """If last shift has a start time then it must also have an end time."""
+        return If(self.start_time(self.last_shift) != NONE, self.end_time(self.last_shift) == NONE, True)
 
     def first_shift_constraints(self):
-        """
-        :return: a boolean representing the constraints for the last shift in the rota
-        :rtype: z3.BitVecRef
-
-        If first shift has an end time then it must also have a start time.
-        """
-        return If(
-            self.end_time(self.start_date) != BitVecVal(16777215, 24),
-            self.start_time(self.start_date) != BitVecVal(16777215, 24),
-            True
-        )
+        """If first shift has an end time then it must also have a start time."""
+        return If(self.end_time(self.first_shift) != NONE, self.start_time(self.first_shift) != NONE, True)
 
     def average_working_week(self):
-        """
-        :return: the average working week in seconds
-        :rtype: z3.BitVecRef
-
-        Notes:
-            • 1 day = 86400s
-            • 7 days = 604800s
-        """
+        """Returns the average working week in seconds"""
         return UDiv(
-            z_sum([self.shift_length(self.start_date + timedelta(days=i)) for i in range(self.length)]),
+            z_sum([self.shift_length(self.first_shift + timedelta(days=i)) for i in range(self.length)]),
             BitVecVal((self.length * 86400) // 604800, 24)
         )
 
-    def four_prev_long_shifts(self, date):
-        """
-        :param date: the date of the shift
-        :type date: date
-        :return: true if the previous four shifts were long shifts else false
-        :rtype: z3.BitVecRef
-        """
-        return And(
-            self.is_long_shift(date - timedelta(days=4)),
-            self.is_long_shift(date - timedelta(days=3)),
-            self.is_long_shift(date - timedelta(days=2)),
-            self.is_long_shift(date - timedelta(days=1))
-        )
-
-    def four_prev_long_evening_shifts(self, date):
-        """
-        :param date: the date of the shift
-        :type date: date
-        :return: true if the previous four shifts were long evening shifts else false
-        :rtype: z3.BitVecRef
-        """
-        return And(
-            self.is_long_evening_shift(date - timedelta(days=4)),
-            self.is_long_evening_shift(date - timedelta(days=3)),
-            self.is_long_evening_shift(date - timedelta(days=2)),
-            self.is_long_evening_shift(date - timedelta(days=1))
-        )
-
-    def four_prev_night_shifts(self, date):
-        """
-        :param date: the date of the shift
-        :type date: date
-        :return: true if the previous four shifts were night shifts else false
-        :rtype: z3.BitVecRef
-        """
-        return And(
-            self.is_night_shift(date - timedelta(days=4)),
-            self.is_night_shift(date - timedelta(days=3)),
-            self.is_night_shift(date - timedelta(days=2)),
-            self.is_night_shift(date - timedelta(days=1))
-        )
-
     def seven_prev_shifts(self, date):
+        """Returns true if the previous seven days have been worked else False"""
+        c = [self.start_time(date - timedelta(days=i)) != NONE for i in range(1, 8)]
+        return And(c[0], c[1], c[2], c[3], c[4], c[5], c[6])
+
+    def fourty_eight_hours_rest(self, date):
+        """Returns True if there has been 48 hours of rest after the ending of this shift"""
         return And(
-            self.start_time(date - timedelta(days=1)) != BitVecVal(16777215, 24),
-            self.start_time(date - timedelta(days=2)) != BitVecVal(16777215, 24),
-            self.start_time(date - timedelta(days=3)) != BitVecVal(16777215, 24),
-            self.start_time(date - timedelta(days=4)) != BitVecVal(16777215, 24),
-            self.start_time(date - timedelta(days=5)) != BitVecVal(16777215, 24),
-            self.start_time(date - timedelta(days=6)) != BitVecVal(16777215, 24),
-            self.start_time(date - timedelta(days=7)) != BitVecVal(16777215, 24),
-        )
+                self.start_time(date) == NONE,
+                self.start_time(date + DAYS_1) == NONE,
+                If(
+                    self.end_time(date) == NONE,
+                    And(
+                        self.start_time(date + DAYS_2) == NONE,
+                        self.start_time(date + DAYS_3) >= self.end_time(date)
+                    ),
+                    self.start_time(date + DAYS_2) >= self.end_time(date)
+                )
+            )
 
     def rest_after_night_shift(self, date):
-        """
-        :param date: the date of the shift
-        :type date: date
-        :return: a boolean representing the combination of constraints for rest after a night shift
-        :rtype: z3.BitVecRef
-
-        These constraints are applied to all shifts apart from the final, as the final shift cannot be a night shift.
-        """
-        return Not(
+        """If this shift is a night shift then there must be 46 hours of rest between the next shift"""
+        return If(
+            self.is_night_shift(date),
             And(
-                self.is_night_shift(date),
-                self.start_time(date + timedelta(days=2)) != BitVecVal(16777215, 24),
-                self.start_time(date + timedelta(days=3)) < self.end_time(date + timedelta(days=1)) -
-                BitVecVal(7200, 24)
-            )
+                self.start_time(date + DAYS_2) == NONE,
+                self.start_time(date + DAYS_3) >= self.end_time(date + DAYS_1) - HOURS_2
+            ),
+            True
         )
 
-    def rest_after_long_shifts(self, date):
-        """
-        :param date: the date of the shift
-        :type date: date
-        :return: a boolean representing the constraints for rest after four long shifts
-        :rtype: z3.BitVecRef
-        """
-        return Not(
-            And(
-                self.four_prev_long_shifts(date),
-                self.start_time(date) != BitVecVal(16777215, 24),
-                self.start_time(date + timedelta(days=1)) != BitVecVal(16777215, 24),
-                If(
-                    self.end_time(date) == BitVecVal(16777215, 24),
-                    And(
-                        self.start_time(date + timedelta(days=2)) != BitVecVal(16777215, 24),
-                        self.start_time(date + timedelta(days=3)) < self.end_time(date)
-                    ),
-                    self.start_time(date + timedelta(days=2)) < self.end_time(date)
-                )
-            )
-        )
+    def long_shift_constraints(self, date):
+        """48 hours of rest after four previous long shifts"""
+        return If(four_prev_shifts(date, self.is_long_shift), self.rest_after_night_shift(date), True)
 
-    def rest_after_long_evening_shifts(self, date):
-        """
-        :param date: the date of the shift
-        :type date: date
-        :return: a boolean representing the constraints for rest after four long shifts
-        :rtype: z3.BitVecRef
-        """
-        return Not(
-            And(
-                self.four_prev_night_shifts(date),
-                self.is_night_shift(date)
-            )
-        )
+    def long_evening_shift_constraints(self, date):
+        """48 hours of rest after four previous long evening shifts"""
+        return If(four_prev_shifts(date, self.is_long_evening_shift), self.rest_after_night_shift(date), True)
 
-    def max_night_shifts(self, date):
-        """
-        :param date: the date of the shift
-        :type date: date
-        :return: a boolean representing ...
-        :rtype: z3.BitVecRef
-        """
+    def night_shift_constraints(self, date):
+        """No more than four consecutive night shifts"""
         return Not(
             And(
-                self.four_prev_long_evening_shifts(date),
-                self.start_time(date) != BitVecVal(16777215, 24),
-                self.start_time(date + timedelta(days=1)) != BitVecVal(16777215, 24),
-                If(
-                    self.end_time(date) == BitVecVal(16777215, 24),
-                    And(
-                        self.start_time(date + timedelta(days=2)) != BitVecVal(16777215, 24),
-                        self.start_time(date + timedelta(days=3)) < self.end_time(date)
-                    ),
-                    self.start_time(date + timedelta(days=2)) < self.end_time(date)
-                )
+                four_prev_shifts(date, self.is_long_evening_shift),
+                self.start_time(date + DAYS_1) != NONE
             )
         )
 
     def max_shifts(self, date):
-        """
-        :param date: the date of the shift
-        :type date: date
-        :return: a boolean representing ...
-        :rtype: z3.BitVecRef
-        """
-        return Not(
-            And(
-                self.seven_prev_shifts(date),
-                self.start_time(date) != BitVecVal(16777215, 24),
-                self.start_time(date + timedelta(days=1)) != BitVecVal(16777215, 24),
-                If(
-                    self.end_time(date) == BitVecVal(16777215, 24),
-                    And(
-                        self.start_time(date + timedelta(days=2)) != BitVecVal(16777215, 24),
-                        self.start_time(date + timedelta(days=3)) < self.end_time(date)
-                    ),
-                    self.start_time(date + timedelta(days=2)) < self.end_time(date)
-                )
-            )
-        )
+        """48 hours rest after 7 consecutive days"""
+        return If(self.seven_prev_shifts(date), self.fourty_eight_hours_rest(date), True)
 
     def weekend_constraints(self):
+        """Returns a list of constraints, each one is True only if no more than 1 in 3 weekends have been worked."""
         weekends = []
         weekend_constraints = []
         for i in range(self.length):
-            date = self.start_date + timedelta(days=i)
+            date = self.first_shift + timedelta(days=i)
             if is_sat(date):
                 weekends.append(
                     Or(
-                        self.start_time(date) != BitVecVal(16777215, 24),
-                        self.end_time(date) != BitVecVal(16777215, 24),
-                        self.start_time(date + timedelta(days=1)) != BitVecVal(16777215, 24),
-                        self.end_time(date + timedelta(days=1)) != BitVecVal(16777215, 24)
+                        self.start_time(date) != NONE,
+                        self.end_time(date) != NONE,
+                        self.start_time(date + DAYS_1) != NONE,
+                        self.end_time(date + DAYS_1) != NONE
                     )
                 )
         for i in range(len(weekends) - 2):
@@ -462,36 +266,24 @@ class RotaCreator:
         """
         Adds the following constraints to the optimizer:
         https://www.nhsemployers.org/system/files/media/Rota-rules-at-a-glance_0.pdf
-
-        Alongside are additional constraints:
-            • end times must be greater than start times, unless there is no start time
-            • start and end times must be greater than or equal to 00:00 and less than 24:00
-            • the final shift cannot be a night shift
-            • three additional rest shifts are added which are all rest days, to prevent key errors
-            • if there is no
         """
 
         # final three shifts are all rest days (these are included to prevent key errors)
         for i in range(self.rota.length, self.rota.length + 3):
-            self.o.add(self.rota.start_time(self.rota.start_date + timedelta(days=i)) == BitVecVal(16777215, 24))
-            self.o.add(self.rota.end_time(self.rota.start_date + timedelta(days=i)) == BitVecVal(16777215, 24))
+            self.o.add(self.rota.start_time(self.rota.first_shift + timedelta(days=i)) == NONE)
+            self.o.add(self.rota.end_time(self.rota.first_shift + timedelta(days=i)) == NONE)
 
+        # add general shift time constraints and the first set of relationships between shift times
         for i in range(self.rota.length):
-            # add general shift start time constraints
-            self.o.add(self.rota.start_time_constraints(self.rota.start_date + timedelta(days=i)))
-            # add general shift end time constraints
-            self.o.add(self.rota.end_time_constraints(self.rota.start_date + timedelta(days=i)))
-            # add relationships between shift constraints (1)
-            self.o.add(self.rota.shift_relationship_constraints_1(self.rota.start_date + timedelta(days=i)))
+            self.o.add(self.rota.shift_time_constraints(self.rota.first_shift + timedelta(days=i)))
+            self.o.add(self.rota.shift_relationships_1(self.rota.first_shift + timedelta(days=i)))
 
-        # add relationships between shift constraints (2)
+        # add the second set of relationships between shift times
         for i in range(1, self.rota.length):
-            self.o.add(self.rota.shift_relationship_constraints_2(self.rota.start_date + timedelta(days=i)))
+            self.o.add(self.rota.shift_relationships_2(self.rota.first_shift + timedelta(days=i)))
 
-        # add last shift constraints
+        # add first and last shift constraints
         self.o.add(self.rota.last_shift_constraints())
-
-        # add first shift constraints
         self.o.add(self.rota.first_shift_constraints())
 
         # max 48-hour average working week
@@ -500,24 +292,23 @@ class RotaCreator:
         # max 72 hours work in any consecutive period of 168 hours
         """TO ADD"""
 
+        # max 13-hour shift length
         for i in range(self.rota.length):
-            # max 13-hour shift length
-            self.o.add(self.rota.shift_length(self.rota.start_date + timedelta(days=i)) <= BitVecVal(46800, 24))
+            self.o.add(self.rota.shift_length(self.rota.first_shift + timedelta(days=i)) <= BitVecVal(46800, 24))
 
+        # 46 hours of rest required after any number of night shifts
         for i in range(self.rota.length - 1):
-            # 46 hours of rest required after any number of night shifts
-            self.o.add(self.rota.rest_after_night_shift(self.rota.start_date + timedelta(days=i)))
+            self.o.add(self.rota.rest_after_night_shift(self.rota.first_shift + timedelta(days=i)))
 
+        # adds long, long evening and night shift constraints
         for i in range(4, self.rota.length):
-            # max 4 consecutive long shifts, at least 48 hours rest following the fourth shift
-            self.o.add(self.rota.rest_after_long_shifts(self.rota.start_date + timedelta(days=i)))
-            # max 4 consecutive long evening shifts, at least 48 hours rest following the fourth shift
-            self.o.add(self.rota.rest_after_long_evening_shifts(self.rota.start_date + timedelta(days=i)))
-            # max 4 consecutive night shifts
-            self.o.add(self.rota.max_night_shifts(self.rota.start_date + timedelta(days=i)))
+            self.o.add(self.rota.long_shift_constraints(self.rota.first_shift + timedelta(days=i)))
+            self.o.add(self.rota.long_evening_shift_constraints(self.rota.first_shift + timedelta(days=i)))
+            self.o.add(self.rota.night_shift_constraints(self.rota.first_shift + timedelta(days=i)))
 
+        # maximum of 7 consecutive days worked
         for i in range(7, self.rota.length):
-            self.o.add(self.rota.max_shifts(self.rota.start_date + timedelta(days=i)))
+            self.o.add(self.rota.max_shifts(self.rota.first_shift + timedelta(days=i)))
 
         # max 1 in 3 weekends worked
         for constraint in self.rota.weekend_constraints():
