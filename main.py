@@ -11,9 +11,11 @@ ZERO = BitVecVal(0, 24)
 HOURS_2 = BitVecVal(7200, 24)
 HOURS_6 = BitVecVal(21600, 24)
 HOURS_10 = BitVecVal(3600, 24)
+HOURS_13 = BitVecVal(46800, 24)
 HOURS_16 = BitVecVal(57600, 24)
 HOURS_23 = BitVecVal(82800, 24)
 HOURS_24 = z3.BitVecVal(86400, 24)
+HOURS_48 = z3.BitVecVal(172800, 24)
 MINUTES_30 = BitVecVal(1800, 24)
 
 
@@ -286,15 +288,19 @@ class RotaCreator:
         self.o.add(self.rota.last_shift_constraints())
         self.o.add(self.rota.first_shift_constraints())
 
+        # soft rules
+        for i in range(self.rota.length):
+            self.o.add_soft(self.rota.soft_rules(self.rota.first_shift + timedelta(days=i)))
+
         # max 48-hour average working week
-        self.o.add(self.rota.average_working_week() <= BitVecVal(172800, 24))
+        self.o.add(self.rota.average_working_week() <= HOURS_48)
 
         # max 72 hours work in any consecutive period of 168 hours
         """TO ADD"""
 
         # max 13-hour shift length
         for i in range(self.rota.length):
-            self.o.add(self.rota.shift_length(self.rota.first_shift + timedelta(days=i)) <= BitVecVal(46800, 24))
+            self.o.add(self.rota.shift_length(self.rota.first_shift + timedelta(days=i)) <= HOURS_13)
 
         # 46 hours of rest required after any number of night shifts
         for i in range(self.rota.length - 1):
@@ -324,19 +330,17 @@ class RotaCreator:
 
 def convert_z3_ref(ref):
     ref = int(str(ref))
-    if ref == 16777215:
-        return -1
-    else:
-        return ref / 3600
+    return "" if ref == 16777215 else ref / 3600
 
 
-def shift_times(l):
+def shift_times(starts, ends):
+    l = [list(a) for a in zip(starts, ends)]
     n = len(l)
     ln = []
     for i in range(n):
-        if l[i][0] == -1:
-            ln.append(0)
-        elif l[i][1] == -1:
+        if l[i][0] == "":
+            ln.append("")
+        elif l[i][1] == "":
             ln.append(l[i + 1][1] + 24 - l[i][0])
         else:
             ln.append(l[i][1] - l[i][0])
@@ -358,9 +362,10 @@ def main():
                     r.rota.start_times.keys()]
         starts = [convert_z3_ref(m[d]) for d in r.rota.start_times.values()]
         ends = [convert_z3_ref(m[d]) for d in r.rota.end_times.values()]
-        starts_and_ends = [list(a) for a in zip(starts, ends)]
-        shift_lengths = shift_times(starts_and_ends)
-        for item in zip(weekdays, starts, ends, shift_lengths):
+        lengths = shift_times(starts, ends)
+
+        print(f"{'day': <10} {'start': <10} {'end': <10} {'length': <10}")
+        for item in zip(weekdays, starts, ends, lengths):
             print(f"{item[0]: <10} {item[1]: <10} {item[2]: <10} {item[3]: <10}")
 
 
