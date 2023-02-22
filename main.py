@@ -3,21 +3,21 @@ from z3 import *
 import calendar
 from datetime import date, timedelta
 
-NONE = BitVecVal(16777215, 24)
+NONE = BitVecVal(511, 9)
 DAYS_1 = timedelta(days=1)
 DAYS_2 = timedelta(days=2)
 DAYS_3 = timedelta(days=3)
-ZERO = BitVecVal(0, 24)
-HOURS_2 = BitVecVal(7200, 24)
-HOURS_6 = BitVecVal(21600, 24)
-HOURS_10 = BitVecVal(3600, 24)
-HOURS_13 = BitVecVal(46800, 24)
-HOURS_16 = BitVecVal(57600, 24)
-HOURS_23 = BitVecVal(82800, 24)
-HOURS_24 = BitVecVal(86400, 24)
-HOURS_48 = BitVecVal(172800, 24)
-HOURS_72 = BitVecVal(259200, 24)
-MINUTES_30 = BitVecVal(1800, 24)
+ZERO = BitVecVal(0, 9)
+HOURS_2 = BitVecVal(4, 9)
+HOURS_6 = BitVecVal(12, 9)
+HOURS_10 = BitVecVal(20, 9)
+HOURS_13 = BitVecVal(26, 9)
+HOURS_16 = BitVecVal(32, 9)
+HOURS_23 = BitVecVal(46, 9)
+HOURS_24 = BitVecVal(48, 9)
+HOURS_48 = BitVecVal(96, 9)
+HOURS_72 = BitVecVal(144, 9)
+MINUTES_30 = BitVecVal(1, 9)
 
 
 def z_sum(z_list):
@@ -50,11 +50,11 @@ class Rota:
         self.first_shift = start_date
         self.last_shift = end_date - DAYS_1
         self.length = (end_date - start_date).days
-        self.start_times = {start_date + timedelta(days=i): z3.BitVec(f's{i}', 24) for i in range(self.length)}
-        self.end_times = {start_date + timedelta(days=i): z3.BitVec(f'e{i}', 24) for i in range(self.length)}
+        self.start_times = {start_date + timedelta(days=i): z3.BitVec(f's{i}', 9) for i in range(self.length)}
+        self.end_times = {start_date + timedelta(days=i): z3.BitVec(f'e{i}', 9) for i in range(self.length)}
         for i in range(self.length, self.length + 3):
-            self.start_times[self.first_shift + timedelta(days=i)] = z3.BitVec(f'_s{i}', 24)
-            self.end_times[self.first_shift + timedelta(days=i)] = z3.BitVec(f'_e{i}', 24)
+            self.start_times[self.first_shift + timedelta(days=i)] = z3.BitVec(f'_s{i}', 9)
+            self.end_times[self.first_shift + timedelta(days=i)] = z3.BitVec(f'_e{i}', 9)
 
     def start_time(self, date):
         """Returns the start time of the shift"""
@@ -171,7 +171,7 @@ class Rota:
         """Returns the average working week in seconds"""
         return UDiv(
             z_sum([self.shift_length(self.first_shift + timedelta(days=i)) for i in range(self.length)]),
-            BitVecVal((self.length * 86400) // 604800, 24)
+            BitVecVal((self.length * 48) // 336, 9)
         )
 
     def seven_prev_shifts(self, date):
@@ -257,19 +257,6 @@ class Rota:
             )
         return weekend_constraints
 
-    def handover_rules(self, date):
-        return If(
-            self.is_night_shift(date),
-            And(
-                self.start_time(date) == BitVecVal(30600, 24),
-                self.end_time(date + DAYS_1) == BitVecVal(34200, 24),
-            ),
-            Or(
-                self.start_time(date) == BitVecVal(32400, 24),
-                self.start_time(date) == NONE
-            )
-        )
-
 
 class RotaCreator:
     def __init__(self, start_date, end_date):
@@ -305,10 +292,10 @@ class RotaCreator:
         # add first and last shift constraints
         self.o.add(self.rota.last_shift_constraints())
         self.o.add(self.rota.first_shift_constraints())
-
-        # soft rules
-        for i in range(self.rota.length):
-            self.o.add(self.rota.handover_rules(self.rota.first_shift + timedelta(days=i)))
+        #
+        # # soft rules
+        # for i in range(self.rota.length):
+        #     self.o.add(self.rota.handover_rules(self.rota.first_shift + timedelta(days=i)))
 
         # max 48-hour average working week
         self.o.add(self.rota.average_working_week() <= HOURS_48)
@@ -349,7 +336,7 @@ class RotaCreator:
 
 def convert_z3_ref(ref):
     ref = int(str(ref))
-    return "" if ref == 16777215 else ref / 3600
+    return "" if ref == 511 else ref / 2
 
 
 def shift_times(starts, ends):
