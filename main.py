@@ -14,8 +14,9 @@ HOURS_10 = BitVecVal(3600, 24)
 HOURS_13 = BitVecVal(46800, 24)
 HOURS_16 = BitVecVal(57600, 24)
 HOURS_23 = BitVecVal(82800, 24)
-HOURS_24 = z3.BitVecVal(86400, 24)
-HOURS_48 = z3.BitVecVal(172800, 24)
+HOURS_24 = BitVecVal(86400, 24)
+HOURS_48 = BitVecVal(172800, 24)
+HOURS_72 = BitVecVal(259200, 24)
 MINUTES_30 = BitVecVal(1800, 24)
 
 
@@ -225,6 +226,10 @@ class Rota:
         """48 hours rest after 7 consecutive days"""
         return If(self.seven_prev_shifts(date), self.fourty_eight_hours_rest(date), True)
 
+    def max_72_hours_in_a_week(self, date):
+        """max 72 hours worked """
+        return z_sum([self.shift_length(date - timedelta(days=i)) for i in range(7)]) <= HOURS_72
+
     def weekend_constraints(self):
         """Returns a list of constraints, each one is True only if no more than 1 in 3 weekends have been worked."""
         weekends = []
@@ -251,6 +256,19 @@ class Rota:
                 )
             )
         return weekend_constraints
+
+    def handover_rules(self, date):
+        return If(
+            self.is_night_shift(date),
+            And(
+                self.start_time(date) == BitVecVal(30600, 24),
+                self.end_time(date + DAYS_1) == BitVecVal(34200, 24),
+            ),
+            Or(
+                self.start_time(date) == BitVecVal(32400, 24),
+                self.start_time(date) == NONE
+            )
+        )
 
 
 class RotaCreator:
@@ -290,13 +308,14 @@ class RotaCreator:
 
         # soft rules
         for i in range(self.rota.length):
-            self.o.add_soft(self.rota.soft_rules(self.rota.first_shift + timedelta(days=i)))
+            self.o.add(self.rota.handover_rules(self.rota.first_shift + timedelta(days=i)))
 
         # max 48-hour average working week
         self.o.add(self.rota.average_working_week() <= HOURS_48)
 
         # max 72 hours work in any consecutive period of 168 hours
-        """TO ADD"""
+        for i in range(7, self.rota.length):
+            self.o.add(self.rota.max_72_hours_in_a_week(self.rota.first_shift + timedelta(days=i)))
 
         # max 13-hour shift length
         for i in range(self.rota.length):
