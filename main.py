@@ -59,9 +59,10 @@ class Rota:
         reference to each z3.Bool is given by {shift_number}{colum}{row}. For example, the first shift, for four
         employees and three shifts is:
 
-        [[000, 010, 020],
-         [001, 011, 012],
-         [002, 012, 022]]
+                    p0   p1   p2   p3
+               s0 [[000, 010, 020, 030],
+               s2  [001, 011, 012, 013],
+               s3  [002, 012, 022, 023]]
         """
         return np.array([[Bool(f"{shift_number}{i}{j}") for i in range(self.no_staff)] for j in range(self.no_roles)])
 
