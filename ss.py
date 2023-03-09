@@ -108,10 +108,10 @@ class IndividualRota:
         """True if the shift is a night shift else False"""
         return Or(
             self.start_time(date) + self.shift_length(date) >= HOURS_26,
+            self.start_time(date) <=
             And(
                 self.start_time(date) != NA,
-                self.end_time(date) != NA,
-                HOURS_6 - self.shift_length(date) - self.end_time(date) >= HOURS_3,
+                self
             )
         )
 
@@ -328,7 +328,7 @@ class IndividualRota:
         o.add([constraint for constraint in self.weekend_constraints()])
 
         # nominally 11 hours rest between shifts
-        o.add_soft([self.eleven_hours_rest(self.first_shift + timedelta(days=i)) for i in range(self.length)])
+        # o.add_soft([self.eleven_hours_rest(self.first_shift + timedelta(days=i)) for i in range(self.length)])
 
 
 class RotaCreator:
